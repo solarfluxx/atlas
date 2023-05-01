@@ -1,0 +1,14 @@
+{
+  "name": "atlas",
+  "version": "1.0.0",
+  "repository": "https://github.com/solarfluxx/atlas.git",
+  "author": "solarfluxx <56509699+solarfluxx@users.noreply.github.com>",
+  "license": "MIT",
+  "dependencies": {
+    "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "typescript": "^5.0.4"
+  }
+}
