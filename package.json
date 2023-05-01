@@ -1,14 +1,21 @@
 {
-  "name": "atlas",
+  "name": "@solarfluxx/atlas",
   "version": "1.0.0",
   "repository": "https://github.com/solarfluxx/atlas.git",
   "author": "solarfluxx <56509699+solarfluxx@users.noreply.github.com>",
   "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "publish:local": "yarn build && yalc push"
+  },
   "dependencies": {
     "react": "^18.2.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",
+    "typedoc": "^0.24.6",
     "typescript": "^5.0.4"
   }
 }

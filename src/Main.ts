@@ -54,8 +54,7 @@ export class IAtom<T extends object = object, P extends boolean = boolean> {
 	static atom<T>(value: T) {
 		const valueIsObject = isObject(value);
 		const source = valueIsObject ? value : { value };
-		const atom = new IAtom(source, !valueIsObject);
-		return atom.$proxy as Atom<T>;
+		return new IAtom(source, !valueIsObject).$proxy as Atom<T>;
 	}
 	
 	static deep<T extends object>(value: T) {
@@ -132,7 +131,7 @@ export class IAtom<T extends object = object, P extends boolean = boolean> {
 		return raw as Unatom<T>;
 	}
 	
-	private $proxy!: any;
+	private $proxy: any;
 	private $observers: { [prop: string | symbol]: Set<() => void> } = {};
 	
 	/**
@@ -194,6 +193,11 @@ export class IAtom<T extends object = object, P extends boolean = boolean> {
 	}
 	
 	*[Symbol.iterator]() {
+		if (Array.isArray(this.$source)) {
+			for (const item of this.$source) { yield item; }
+			return;
+		}
+		
 		yield `${this.$primitive ? this.$use('value') : this.$use('toString')}`;
 	}
 	
