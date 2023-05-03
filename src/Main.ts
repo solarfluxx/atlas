@@ -225,8 +225,21 @@ export class IAtom<T extends object = object, P extends boolean = boolean> {
 			return this;
 		}
 		
-		Object.assign(this.$source, value);
-		for (const prop in Object.keys(value)) { this.$notify(prop); }
+		const current = value instanceof IAtom ? value.$source : value;
+		
+		for (const prop in current) {
+			const currentValue = this.$source[prop as keyof T];
+			
+			if (currentValue instanceof IAtom) {
+				currentValue.$set(current[prop]);
+				this.$notify(prop);
+				break;
+			}
+			
+			this.$source[prop as keyof T] = current[prop];
+			this.$notify(prop);
+		}
+		
 		return this;
 	}
 	
@@ -242,8 +255,21 @@ export class IAtom<T extends object = object, P extends boolean = boolean> {
 	 * ```
 	 */
 	$merge(value: Partial<T>) {
-		Object.assign(this.$source, value);
-		for (const prop in Object.keys(value)) { this.$notify(prop); }
+		const current = value instanceof IAtom ? value.$source : value;
+		
+		for (const prop in current) {
+			const currentValue = this.$source[prop as keyof T];
+			
+			if (currentValue instanceof IAtom) {
+				currentValue.$set(current[prop]);
+				this.$notify(prop);
+				break;
+			}
+			
+			this.$source[prop as keyof T] = current[prop];
+			this.$notify(prop);
+		}
+		
 		return this;
 	}
 	
