@@ -1,25 +1,38 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
+/// Helpers
+function isObject(value: any): value is object {
+	return typeof value === 'object' && value !== null;
+}
+
+type Predicate<T, R = T> = (current: T) => R;
+function isPredicate(value: any): value is Predicate<any> {
+	return typeof value === 'function';
+}
+
+function extractMethodsOf<T, P extends keyof T, M extends { [K in Exclude<keyof T, P>]?: true }>(target: T, primary: P, methods: M) {
+	const sides = {} as { [K in keyof M as K extends keyof T ? (T[K] extends Function ? K : never) : never]: K extends keyof T ? T[K] : never };
+	for (const key in methods) { (sides as any)[key] = (target as any)[key].bind(target); }
+	return Object.assign((target[primary] as Function).bind(target), sides) as any as T[P] & typeof sides;
+}
+
+/// Global
 namespace Global {
 	export let atomCounter = 0;
 	
 	export interface Context {
 		type: 'component' | 'action';
-		config: Map<IAtom, Set<string | symbol>>;
+		config: Map<BaseAtom, Set<string | symbol>>;
 	}
 	
 	export const scans: Context[] = [];
 }
 
-type Value<T> = Omit<T, keyof IAtom>;
-type MakeAtom<T extends object, P extends boolean> = Value<T> & IAtom<T, P>;
-
-export type Atom<T, U = {}> = (T extends object ? ObjectAtom<T> : PrimitiveAtom<T>) & U;
-export type ObjectAtom<T extends object> = MakeAtom<T, false>;
-export type PrimitiveAtom<T> = MakeAtom<{
-	/** Holds the value of the atom. This value can be read from and written to. */
-	value: T;
-}, true>;
+/// Types
+type Pick<T> = T extends object ? ObjectAtom<T> : PrimitiveAtom<T>;
+export type Atom<T> = {} & Pick<T>;
+export type ObjectAtom<T extends object = object> = {} & _ObjectAtom<T>['$proxy'];
+export type PrimitiveAtom<T = any> = {} & _PrimitiveAtom<T>['$proxy'];
 
 export type DeepAtom<T> = Atom<{ [K in keyof T]: DeepAtomCollapse<T[K]> }>;
 export type DeepAtomCollapse<T> = T extends object ? DeepAtom<T> : T;
@@ -33,106 +46,48 @@ export type Unatom<T> = (
 	: T
 );
 
-function isObject(value: any): value is object {
-	return typeof value === 'object' && value !== null;
-}
+export type Focusable<T> = { [K in keyof T as T[K] extends object ? never : K]: Atom<T[K]> };
 
-export type AtomValue<T, P> = P extends true ? (T extends { value: any } ? T['value'] : never) : T;
-
-export class IAtom<T extends object = object, P extends boolean = boolean> {
-	static getMethods() {
-		return Object.assign(this.atom.bind(this), {
-			deep: this.deep.bind(this),
-			prime: this.prime.bind(this),
-			focus: this.focus.bind(this),
-			unatom: this.unatom.bind(this),
-		});
+/// Classes
+abstract class BaseAtom<T extends object = object> {
+	/** Returns an atom from the given object. */
+	static atom<T extends object>(object: T): Atom<T>;
+	/** Returns a primitive atom from the given value. */
+	static atom<T>(primitive: T): Atom<T>;
+	static atom<T>(value: T): any {
+		return isObject(value) ? new _ObjectAtom(value).$proxy : new _PrimitiveAtom({ value }).$proxy;
 	}
 	
-	static atom<T extends object>(value: T): ObjectAtom<T>;
-	static atom<T>(value: T): PrimitiveAtom<T>;
-	static atom<T>(value: T) {
-		const valueIsObject = isObject(value);
-		const source = valueIsObject ? value : { value };
-		return new IAtom(source, !valueIsObject).$proxy as Atom<T>;
-	}
-	
-	static deep<T extends object>(value: T) {
-		const root: object = Array.isArray(value) ? [ ...value ] : { ...value };
-		for (const key in root) {
-			const value = root[key as keyof typeof root];
+	/** Returns a deeply atomized copy of the given object. */
+	static deep<T extends object>(object: T) {
+		const copy: object = Array.isArray(object) ? [ ...object ] : { ...object };
+		for (const key in copy) {
+			const value = copy[key as keyof typeof copy];
 			if (value && typeof value === 'object') {
-				root[key as keyof typeof root] = this.deep(value);
+				copy[key as keyof typeof copy] = this.deep(value);
 			}
 		}
-		return this.atom(root) as DeepAtomCollapse<T>;
+		return this.atom(copy) as DeepAtomCollapse<T>;
 	}
 	
-	static prime<T extends object>(value: T) {
-		const root: object = Array.isArray(value) ? [ ...value ] : { ...value };
-		for (const key in root) {
-			const value = root[key as keyof typeof root];
-			(root[key as keyof typeof root] as any) = (
-				(value !== null && typeof value === 'object')
-				? this.prime(value)
-				: this.atom(value)
-			);
-		}
-		return this.atom(root) as PrimeAtomCollapse<T>;
-	}
-	
-	static focus<T>(reference: () => T) {
-		const createFocusAtom = () => {
-			const context: Global.Context = { type: 'action', config: new Map() };
-			Global.scans.push(context);
-			const value = reference();
-			if (context.config.size !== 1) { throw new Error(`Atom focus reference expected 1 target value, got ${context.config.size}`); }
-			const [ origin, props ] = [ ...context.config ][0];
-			if (props.size !== 1) { throw new Error(`Atom focus reference expected 1 target value, got ${context.config.size}`); }
-			const prop = [ ...props ][0];
-			const local = this.atom(value);
-			Global.scans.pop();
-			const localObserver = () => {
-				(origin.$source as any)[prop] = local.value;
-				origin.$notify(prop, originObserver);
-			};
-			const originObserver = () => {
-				local.$source.value = (origin as any)[prop];
-				local.$notify('value', localObserver);
-			};
-			const localCleanup = local.$watch(new Set([ 'value' ]), localObserver);
-			const originCleanup = origin.$watch(props, originObserver);
-			return [ local, () => {
-				localCleanup();
-				originCleanup();
-			} ] as const;
-		};
-		
-		if (Global.scans.at(-1)?.type === 'component') {
-			const [ atom, cleanup ] = useMemo(createFocusAtom, []);
-			useEffect(() => cleanup, []);
-			return atom;
-		}
-		
-		return createFocusAtom()[0];
-	}
-	
+	/** Removes any atoms in the given value. */
 	static unatom<T>(value: T) {
 		if (typeof value !== 'object' || value === null) { return value as Unatom<T>; }
-		const current = value instanceof IAtom ? value.$source : value;
-		const raw: object = Array.isArray(current) ? [ ...current ] : { ...current };
-		for (const key in raw) {
-			raw[key as keyof typeof raw] = (
+		const source = this.sourceOf(value);
+		const copy: object = Array.isArray(source) ? [ ...source ] : { ...source };
+		for (const key in copy) {
+			copy[key as keyof typeof copy] = (
 				(typeof value === 'object' || value !== null)
-				? this.unatom(raw[key as keyof typeof raw])
-				: raw[key as keyof typeof raw]
+				? this.unatom(copy[key as keyof typeof copy])
+				: copy[key as keyof typeof copy]
 			);
 		}
-		return raw as Unatom<T>;
+		return copy as Unatom<T>;
 	}
 	
-	private $proxy: any;
-	private $observers: { [prop: string | symbol]: Set<() => void> } = {};
+	static sourceOf<T>(value: T) {
+		return (value instanceof BaseAtom ? value.$source : value) as (T extends BaseAtom<infer Y> ? Y : T);
+	}
 	
 	/**
 	 * Holds the unique ID for this atom.
@@ -146,10 +101,14 @@ export class IAtom<T extends object = object, P extends boolean = boolean> {
 	 * ```
 	 */
 	public readonly $id = Global.atomCounter++;
+	public $focus: Focusable<T>;
 	
-	constructor(private $source: T, private $primitive: P) {
+	protected $proxy: T & this;
+	protected $observers: { [prop: string | symbol]: Set<() => void> } = {};
+	
+	constructor(protected $source: T) {
 		this.$proxy = new Proxy($source, {
-			get: (_target, key, receiver: Atom<T>) => {
+			get: (_target, key, receiver) => {
 				if (key in this) {
 					const prop = this[key as keyof this];
 					return (typeof prop === 'function'
@@ -170,114 +129,70 @@ export class IAtom<T extends object = object, P extends boolean = boolean> {
 				if (typeof prop === 'string') { this.$notify(prop); }
 				return true;
 			},
-		})
+		}) as (T & this);
+		
+		const focusedCache: { [K in keyof T]?: any } = {};
+		this.$focus = new Proxy($source, {
+			get: (_target, key) => {
+				if (!(key in focusedCache)) {
+					if (!(key in this.$source)) {
+						throw new Error(`Cannot focus on invalid key. '${String(key)}' does not exist on atom value.`);
+					}
+					
+					if (typeof this.$source[key as keyof T] === 'object' && this.$source[key as keyof T] !== null) {
+						throw new Error(`Atom focus is only allowed for primitives. Tried focusing on '${String(key)}' which points to an object.`);
+					}
+					
+					const local = atom(this.$source[key as keyof T]) as any as PrimitiveAtom<T[keyof T]>;
+					
+					const observeLocal = () => {
+						this.$source[key as keyof T] = local.value;
+						this.$notify(key, observeOrigin);
+					};
+					
+					const observeOrigin = () => {
+						local.$source.value = this.$source[key as keyof T];
+						local.$notify('value', observeLocal);
+					};
+					
+					local.$watch([ 'value' ], observeLocal);
+					this.$watch([ key as keyof T ], observeOrigin);
+					
+					focusedCache[key as keyof T] = local;
+				}
+				
+				return focusedCache[key as keyof T];
+			}
+		}) as Focusable<T>;
 	}
 	
-	private $notify(prop: string | symbol, ...exceptions: (() => void)[]) {
-		if (!this.$observers[prop]) { return; }
-		for (const observer of this.$observers[prop]) {
+	// abstract $get(...parameters: any[]): unknown;
+	// abstract $set(...parameters: any[]): this;
+	
+	protected $notify(key: string | symbol, ...exceptions: Function[]) {
+		if (!this.$observers[key]) { return; }
+		for (const observer of this.$observers[key]) {
 			if (exceptions.includes(observer)) { continue; }
 			observer();
 		}
 	}
 	
-	private $use(prop: string | symbol) {
+	protected $use(key: string | symbol) {
 		const context = Global.scans.at(-1);
 		if (context) {
 			const config = context.config.get(this.$proxy) ?? new Set();
 			if (config.size === 0) { context.config.set(this.$proxy, config); }
-			config.add(prop);
+			config.add(key);
 		}
 		
-		return Reflect.get(this.$source, prop, this.$proxy);
-	}
-	
-	*[Symbol.iterator]() {
-		if (Array.isArray(this.$source)) {
-			for (const item of this.$source) { yield item; }
-			return;
-		}
-		
-		yield `${this.$primitive ? this.$use('value') : this.$use('toString')}`;
-	}
-	
-	/**
-	 * Returns an untracked instance of the current value.
-	 * Observers will *not* subscribe to this value.
-	 */
-	$get(): Unatom<AtomValue<T, P>> {
-		return IAtom.unatom(this.$primitive ? (this.$source as any).value : this.$source) as any;
-	}
-	
-	/**
-	 * Assigns the atom value to the passed value.
-	 * 
-	 * **Example**
-	 * ```
-	 * const planet = atom<Planet>({ name: 'Earth', type: 'terrestrial' });
-	 * planet.$set({ name: 'Saturn', type: 'gas' });
-	 * ```
-	 */
-	$set(value: AtomValue<T, P>) {
-		if (this.$primitive) {
-			(this.$source as { value: any }).value = value;
-			this.$notify('value');
-			return this;
-		}
-		
-		const current = value instanceof IAtom ? value.$source : value;
-		
-		for (const prop in current) {
-			const currentValue = this.$source[prop as keyof T];
-			
-			if (currentValue instanceof IAtom) {
-				currentValue.$set(current[prop]);
-				this.$notify(prop);
-				break;
-			}
-			
-			this.$source[prop as keyof T] = current[prop];
-			this.$notify(prop);
-		}
-		
-		return this;
-	}
-	
-	/**
-	 * Merges the passed value into the current atom value.
-	 * Any keys not specified in the passed value will not be changed.
-	 * 
-	 * **Example**
-	 * ```
-	 * const user = atom<User>({ id: 14, nick: null, first: 'Sam', last: 'Roger' });
-	 * user.$merge({ nick: 'Sam', first: 'Samuel' }); // Preserves `id` and `last` keys
-	 * console.log(user.$get()); // { id: 14, nick: 'Sam', first: 'Samuel', last: 'Roger' }
-	 * ```
-	 */
-	$merge(value: Partial<T>) {
-		const current = value instanceof IAtom ? value.$source : value;
-		
-		for (const prop in current) {
-			const currentValue = this.$source[prop as keyof T];
-			
-			if (currentValue instanceof IAtom) {
-				currentValue.$set(current[prop]);
-				this.$notify(prop);
-				break;
-			}
-			
-			this.$source[prop as keyof T] = current[prop];
-			this.$notify(prop);
-		}
-		
-		return this;
+		return Reflect.get(this.$source, key, this.$proxy);
 	}
 	
 	/**
 	 * Adds an event listener (observer) to this atom.
 	 * @returns A function that unbinds the observer (removes the event listener) when called.
 	 */
-	$watch(props: Set<string | symbol>, observer: () => void) {
+	public $watch(props: Iterable<keyof T>, observer: () => void) {
 		for (const prop of props) {
 			if (!this.$observers[prop]) { this.$observers[prop] = new Set(); }
 			this.$observers[prop].add(observer);
@@ -290,13 +205,83 @@ export class IAtom<T extends object = object, P extends boolean = boolean> {
 		};
 	}
 	
-	$with<U extends object | void = void>(feature: (target: this) => U) {
+	/**
+	 * Applies a feature to this atom.
+	 * Features can attach effects and other custom functionality to the atom.
+	 * 
+	 * **Note**: This mutates the atom.
+	 */
+	public $with<U extends object | void = void>(feature: (target: this) => U) {
 		const properties = feature(this);
 		if (properties) { Object.assign(this, properties); }
-		return this as U extends void ? this : Atom<T, U>;
+		return this as U extends void ? this : (this & U);
 	}
 }
 
+class _ObjectAtom<T extends object = object> extends BaseAtom<T> {
+	/**
+	 * Returns an atom-free copy of the current value.
+	 * Observers will *not* subscribe to this value.
+	 */
+	public $get() { return BaseAtom.unatom(this.$source); }
+	
+	/**
+	 * Assigns the atom to the given value.
+	 * This method supports deep merging.
+	 * 
+	 * **Example**
+	 * ```
+	 * const planet = atom<Planet>({ name: 'Earth', type: 'terrestrial' });
+	 * planet.$set({ name: 'Saturn', type: 'gas' });
+	 * ```
+	 */
+	public $set(value: T): this;
+	public $set(value: Partial<T>, type: 'merge'): this;
+	public $set(value: T | Partial<T>, _type?: 'merge') {
+		type SourceKey = keyof typeof source;
+		const source = BaseAtom.sourceOf(value);
+		
+		for (const key in source) {
+			const current = this.$source[key as any as keyof T];
+			(current instanceof BaseAtom)
+				? (current as any).$set(source[key as SourceKey])
+				: this.$source[key as any as keyof T] = source[key as SourceKey] as any;
+			this.$notify(key);
+		}
+		
+		return this;
+	}
+	
+	public *[Symbol.iterator]() {
+		for (const key in this.$source) { yield this.$use(key); }
+	}
+}
+
+class _PrimitiveAtom<T = any> extends BaseAtom<{ value: T }> {
+	/**
+	 * Returns the current value.
+	 * Observers will *not* subscribe to this value.
+	 */
+	public $get() { return BaseAtom.unatom(this.$source.value); }
+	
+	/**
+	 * Assigns the atom to the given value.
+	 * 
+	 * **Example**
+	 * ```
+	 * const count = atom(0);
+	 * //...
+	 * count.$set(v => v + 1);
+	 * ```
+	 */
+	public $set(value: T | Predicate<T>) {
+		this.$source.value = isPredicate(value) ? value(this.$source.value) : value;
+		this.$notify('value');
+		return this;
+	}
+}
+
+/// Functions
 export function observe() {
 	// Create scan context.
 	const context: Global.Context = { type: 'component', config: new Map() };
@@ -314,7 +299,7 @@ export function observe() {
 		const cleanups: (() => void)[] = [];
 		for (const [ face, props ] of context.config) {
 			// Add unwatch action to cleanup array.
-			cleanups.push(face.$watch(props, () => update(v => v + 1)));
+			cleanups.push(face.$watch(props as any, () => update(v => v + 1)));
 		}
 		
 		return () => {
@@ -326,4 +311,5 @@ export function observe() {
 	});
 }
 
-export const atom = IAtom.getMethods();
+export const atom = extractMethodsOf(BaseAtom, 'atom', { deep: true });
+export const unatom = BaseAtom.unatom.bind(BaseAtom);
