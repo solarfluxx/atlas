@@ -8,7 +8,6 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "publish": "yarn build && npm publish",
     "publish:local": "yarn build && yalc push"
   },
   "dependencies": {
