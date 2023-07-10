@@ -2,4 +2,8 @@
 	"editor.codeActionsOnSave": {
 		"source.organizeImports": true
 	},
+	"cSpell.words": [
+		"Unatom",
+		"unatomized"
+	],
 }
