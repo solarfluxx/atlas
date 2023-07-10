@@ -79,13 +79,14 @@ class Atom<T extends Article> {
 	/**
 	 * Returns an unatomized copy of the source.
 	 */
-	public getRaw() {
+	public getRaw(seen = new Map<object, object>()) {
 		const raw = { ...this.target };
+		seen.set(this, raw);
 		
 		for (const key in raw) {
 			if (isAtom(raw[key])) {
-				const state = getAtom(raw[key])!;
-				(raw[key] as any) = state.getRaw();
+				if (seen.has(raw[key])) { continue; }
+				(raw[key] as any) = getAtom(raw[key])!.getRaw(seen);
 			}
 		}
 		
