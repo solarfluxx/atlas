@@ -85,8 +85,8 @@ class Atom<T extends Article> {
 		
 		for (const key in raw) {
 			if (isAtom(raw[key])) {
-				if (seen.has(raw[key])) { continue; }
-				(raw[key] as any) = getAtom(raw[key])!.getRaw(seen);
+				const state = getAtom(raw[key])!;
+				(raw[key] as any) = seen.get(state) ?? state.getRaw(seen);
 			}
 		}
 		
