@@ -4,7 +4,11 @@ import { useEffect, useState } from "react";
 type Key = string | number | symbol;
 type Article = { [key: Key]: any };
 type Entry<T extends Article> = { state: Atom<T>, key: keyof T };
+type Manual = { [key: Key]: Key[] };
 export type Reference<T> = { value: T };
+
+type AwaitingAtomArticle<T extends Article = Article> = T & { [Global.asyncSymbol]: AwaitingAtomCallback<any>[] };
+export type AwaitingAtomCallback<T> = (this: T, target: T) => void;
 
 /// Helpers
 function isIterable(value: any): value is object & Iterable<any> {
@@ -15,28 +19,13 @@ function isArticle(value: any): value is Article {
 	return typeof value === 'object' && value !== null && !value[Global.symbol];
 }
 
+function isAwaitingAtom(value: any): value is AwaitingAtomArticle {
+	return typeof value === 'object' && value !== null && value[Global.asyncSymbol];
+}
+
 function atomize<T>(value: T): T {
 	if (isAtom(value)) {
 		return value;
-	}
-	
-	if (typeof value === 'function') {
-		return new Proxy(value, {
-			apply(target, self, parameters) {
-				// Create call context.
-				const callContext: Global.CallContext = { states: [] };
-				Global.callContexts.push(callContext);
-				
-				// Call target.
-				const result = Reflect.apply(target, self, parameters.map(parameter => atomize(parameter)));
-				
-				// Cleanup call context.
-				const index = Global.callContexts.indexOf(callContext);
-				if (index >= 0) { Global.callContexts.splice(index, 1); }
-				
-				return result;
-			},
-		});
 	}
 	
 	if (isArticle(value)) {
@@ -49,6 +38,7 @@ function atomize<T>(value: T): T {
 /// Global
 module Global {
 	export const symbol = Symbol('atom');
+	export const asyncSymbol = Symbol('await atom');
 	
 	export interface Context {
 		states: Map<Atom<any>, Set<Key>>;
@@ -64,6 +54,21 @@ module Global {
 	export const callContexts: CallContext[] = [];
 	
 	export const memoized = new Map<Article, Atom<any>>();
+	
+	export const manuals = new Map<object, Manual>([
+		[WeakSet, {}],
+		[WeakMap, {}],
+		[Set, {
+			add: [ 'size', 'has', 'keys', 'values', 'entries', 'forEach', Symbol.iterator ],
+			delete: [ 'size', 'has', 'keys', 'values', 'entries', 'forEach', Symbol.iterator ],
+			clear: [ 'size', 'has', 'keys', 'values', 'entries', 'forEach', Symbol.iterator ],
+		}],
+		[Map, {
+			set: [ 'size', 'has', 'keys', 'values', 'entries', 'forEach', Symbol.iterator ],
+			delete: [ 'size', 'has', 'keys', 'values', 'entries', 'forEach', Symbol.iterator ],
+			clear: [ 'size', 'has', 'keys', 'values', 'entries', 'forEach', Symbol.iterator ],
+		}],
+	]);
 }
 
 /// Class
@@ -74,23 +79,55 @@ class Atom<T extends Article> {
 	/** Stores the references of each key. */
 	public references = new Map<keyof T, Reference<any>>;
 	
-	constructor(public target: T, public wrapper: T) {}
+	/** Stores the cached method proxies. */
+	public methodCache: { [key: string | symbol]: Function } = {};
+	
+	public constructor(public target: T, public wrapper: T, public manual?: Manual) {}
 	
 	/**
 	 * Returns an unatomized copy of the source.
 	 */
-	public getRaw(seen = new Map<object, object>()) {
-		const raw = { ...this.target };
-		seen.set(this, raw);
+	public distill(seen = new Map<object, object>()) {
+		const distilled = { ...this.target };
+		seen.set(this, distilled);
 		
-		for (const key in raw) {
-			if (isAtom(raw[key])) {
-				const state = getAtom(raw[key])!;
-				(raw[key] as any) = seen.get(state) ?? state.getRaw(seen);
+		for (const key in distilled) {
+			if (isAtom(distilled[key])) {
+				const state = getAtom(distilled[key])!;
+				(distilled[key] as any) = seen.get(state) ?? state.distill(seen);
 			}
 		}
 		
-		return raw;
+		return distilled;
+	}
+	
+	/**
+	 * Returns the value stored at the provided key.
+	 */
+	public get(key: keyof T) {
+		const self = this.manual ? this.target : this.wrapper;
+		const value = Reflect.get(this.target, key, self);
+		if (typeof value !== 'function') { return value; }
+		return this.methodCache[key] ?? (this.methodCache[key] = new Proxy(value, {
+			apply: (method, _proxy, parameters) => {
+				// Create call context.
+				const callContext: Global.CallContext = { states: [] };
+				Global.callContexts.push(callContext);
+				
+				// Call target.
+				const result = Reflect.apply(method, self, parameters.map(parameter => atomize(parameter)));
+				
+				// Cleanup call context.
+				const index = Global.callContexts.indexOf(callContext);
+				if (index >= 0) { Global.callContexts.splice(index, 1); }
+				
+				if (this.manual && this.manual[key]) {
+					this.notify(this.manual[key]);
+				}
+				
+				return result;
+			},
+		}));
 	}
 	
 	/**
@@ -182,7 +219,7 @@ class Atom<T extends Article> {
 		
 		if (!reference) {
 			reference = atom({ value: Reflect.get(this.target, key, this.wrapper) });
-			getAtom(reference)?.link('value', { state: this, key });
+			getAtom(reference).link('value', { state: this, key });
 			this.references.set(key, reference);
 		}
 		
@@ -191,22 +228,6 @@ class Atom<T extends Article> {
 }
 
 /// Functions
-
-/**
- * Returns the atom state instance for an object.
- */
-export function getAtom<T extends Article>(value: T): Atom<T> {
-	const state: Atom<T> | null = typeof value === 'object' && value !== null ? (value as any)[Global.symbol] : null;
-	if (!state) { throw new Error(`Cannot get atom state for the given value. ${typeof value === 'object' ? 'Expected atomized object but got object.' : `Expected object but got ${typeof value}`}`); }
-	return state;
-}
-
-/**
- * Type guard to test if value is an atomized object.
- */
-export function isAtom(value: any): value is { [Global.symbol]: Atom<any> } {
-	return typeof value === 'object' && value !== null && !!value[Global.symbol];
-}
 
 /**
  * Returns an atom of the given source value.
@@ -230,10 +251,10 @@ export function atom<T extends Article>(source: T): T {
 	
 	// Create proxy.
 	const wrapper: T = new Proxy(source, {
-		get(target, key, proxy) {
+		get(_target, key, _proxy) {
 			if (key === Global.symbol) { return state; }
 			state.subscribe(key);
-			return Reflect.get(target, key, proxy);
+			return state.get(key);
 		},
 		set(target, key, incoming, proxy) {
 			Reflect.set(target, key, atomize(incoming), proxy);
@@ -243,12 +264,18 @@ export function atom<T extends Article>(source: T): T {
 	});
 	
 	// Create state and memoize.
-	const state = new Atom(source, wrapper);
+	const state = new Atom(source, wrapper, Global.manuals.get(source.constructor));
 	Global.memoized.set(source, state);
 	
 	// Recursively atomize properties.
 	for (const key in source) {
 		source[key] = atomize(source[key]);
+	}
+	
+	// Resolve awaiting callback.
+	if (isAwaitingAtom(source)) {
+		for (const callback of source[Global.asyncSymbol]) { callback.call(wrapper, wrapper); }
+		delete (source as Article)[Global.asyncSymbol];
 	}
 	
 	return wrapper;
@@ -262,16 +289,16 @@ export function atom<T extends Article>(source: T): T {
  * **Example**
  * ```
  * const state = atom({ counter: 0 });
- * const counter = atom.focus(() => state.counter);
+ * const counter = focusAtom(() => state.counter);
  * 
- * state.counter += 5; // Will update `counter.value`
- * counter.value += 10; // Will update `state.counter`
+ * state.counter += 5; // Updates `counter.value`
+ * counter.value += 10; // Updates `state.counter`
  * 
  * console.log(state); // { counter: 15 }
  * console.log(counter); // { value: 15 }
  * ```
  */
-atom.focus = function<T>(observer: () => T): Reference<T> {
+export function focusAtom<T>(observer: () => T): Reference<T> {
 	// Create scan context.
 	const scan: Global.Context = { states: new Map() };
 	Global.contexts.push(scan);
@@ -306,14 +333,42 @@ atom.focus = function<T>(observer: () => T): Reference<T> {
 /**
  * Removes all atoms from a copy of `value` and returns it.
  */
-atom.raw = function<T>(value: T) {
+export function distillAtom<T>(value: T) {
 	if (isAtom(value)) {
 		const state = getAtom(value)!;
-		return state.getRaw();
+		return state.distill();
 	}
 	
 	return value;
-};
+}
+
+/**
+ * Executes the callback when the target is atomized.
+ */
+export function whenAtom<T extends Article>(target: T, callback: AwaitingAtomCallback<T>) {
+	if (isAwaitingAtom(target)) {
+		target[Global.asyncSymbol]?.push(callback);
+		return;
+	}
+	
+	(target as AwaitingAtomArticle<T>)[Global.asyncSymbol] = [ callback ];
+}
+
+/**
+ * Returns the atom state instance for an object.
+ */
+export function getAtom<T extends Article>(value: T): Atom<T> {
+	const state: Atom<T> | null = typeof value === 'object' && value !== null ? (value as any)[Global.symbol] : null;
+	if (!state) { throw new Error(`Cannot get atom state for the given value. ${typeof value === 'object' ? 'Expected atomized object but got object.' : `Expected object but got ${typeof value}`}`); }
+	return state;
+}
+
+/**
+ * Check if value is an atomized object.
+ */
+export function isAtom(value: any): value is { [Global.symbol]: Atom<any> } {
+	return typeof value === 'object' && value !== null && !!value[Global.symbol];
+}
 
 /**
  * Registers this component as an atom observer.
@@ -323,7 +378,7 @@ atom.raw = function<T>(value: T) {
  * Odd behaviour can emerge if this is not respected.
  */
 export function observe(): void;
-export function observe(observer?: () => void): () => void;
+export function observe(observer: () => void): () => void;
 export function observe(observer?: () => void): void | (() => void) {
 	if (observer) {
 		// Create scan context.
@@ -377,5 +432,34 @@ export function observe(observer?: () => void): void | (() => void) {
 			// Handle cleanup.
 			for (const cleanup of observers) { cleanup(); }
 		};
+	});
+}
+
+export function unobserve(): void;
+export function unobserve<T>(observer: () => T): T;
+export function unobserve<T>(observer?: () => T): void | T {
+	if (observer) {
+		// Create capturing scan context.
+		const scan: Global.Context = { states: new Map() };
+		Global.contexts.push(scan);
+		
+		// Capture scan.
+		const result = observer();
+		
+		// Delete context.
+		const index = Global.contexts.indexOf(scan);
+		if (index >= 0) { Global.contexts.splice(index, 1); }
+		
+		return result;
+	}
+	
+	// Create capturing scan context.
+	const scan: Global.Context = { states: new Map() };
+	Global.contexts.push(scan);
+	
+	useEffect(() => {
+		// Delete context.
+		const index = Global.contexts.indexOf(scan);
+		if (index >= 0) { Global.contexts.splice(index, 1); }
 	});
 }
