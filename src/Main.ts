@@ -7,7 +7,7 @@ type Entry<T extends Article> = { state: Atom<T>, key: keyof T };
 type Manual = { [key: Key]: Key[] };
 export type Reference<T> = { value: T };
 
-type AwaitingAtomArticle<T extends Article = Article> = T & { [Global.asyncSymbol]: AwaitingAtomCallback<any>[] };
+type AwaitingAtomArticle<T extends Article = Article> = T & { [Global.awaitSymbol]: AwaitingAtomCallback<any>[] };
 export type AwaitingAtomCallback<T> = (this: T, target: T) => void;
 
 /// Helpers
@@ -16,11 +16,11 @@ function isIterable(value: any): value is object & Iterable<any> {
 }
 
 function isArticle(value: any): value is Article {
-	return typeof value === 'object' && value !== null && !value[Global.symbol];
+	return typeof value === 'object' && value !== null && !value[Global.atomSymbol];
 }
 
 function isAwaitingAtom(value: any): value is AwaitingAtomArticle {
-	return typeof value === 'object' && value !== null && value[Global.asyncSymbol];
+	return typeof value === 'object' && value !== null && value[Global.awaitSymbol];
 }
 
 function atomize<T>(value: T): T {
@@ -37,8 +37,9 @@ function atomize<T>(value: T): T {
 
 /// Global
 module Global {
-	export const symbol = Symbol('atom');
-	export const asyncSymbol = Symbol('await atom');
+	export const atomSymbol = Symbol('atom');
+	export const unatomSymbol = Symbol('unatom');
+	export const awaitSymbol = Symbol('await atom');
 	
 	export interface Context {
 		states: Map<Atom<any>, Set<Key>>;
@@ -56,17 +57,23 @@ module Global {
 	export const memoized = new Map<Article, Atom<any>>();
 	
 	export const manuals = new Map<object, Manual>([
-		[WeakSet, {}],
-		[WeakMap, {}],
+		[WeakSet, {
+			add: [ 'has' ],
+			delete: [ 'has' ],
+		}],
+		[WeakMap, {
+			add: [ 'has', 'get' ],
+			delete: [ 'has', 'get' ],
+		}],
 		[Set, {
 			add: [ 'size', 'has', 'keys', 'values', 'entries', 'forEach', Symbol.iterator ],
 			delete: [ 'size', 'has', 'keys', 'values', 'entries', 'forEach', Symbol.iterator ],
 			clear: [ 'size', 'has', 'keys', 'values', 'entries', 'forEach', Symbol.iterator ],
 		}],
 		[Map, {
-			set: [ 'size', 'has', 'keys', 'values', 'entries', 'forEach', Symbol.iterator ],
-			delete: [ 'size', 'has', 'keys', 'values', 'entries', 'forEach', Symbol.iterator ],
-			clear: [ 'size', 'has', 'keys', 'values', 'entries', 'forEach', Symbol.iterator ],
+			set: [ 'size', 'has', 'get', 'keys', 'values', 'entries', 'forEach', Symbol.iterator ],
+			delete: [ 'size', 'has', 'get', 'keys', 'values', 'entries', 'forEach', Symbol.iterator ],
+			clear: [ 'size', 'has', 'get', 'keys', 'values', 'entries', 'forEach', Symbol.iterator ],
 		}],
 	]);
 }
@@ -88,14 +95,27 @@ class Atom<T extends Article> {
 	 * Returns an unatomized copy of the source.
 	 */
 	public distill(seen = new Map<object, object>()) {
-		const distilled = { ...this.target };
+		const keys = Reflect.ownKeys(this.target);
+		
+		if (keys.length === 0) {
+			const distilled = structuredClone(this.target);
+			seen.set(this, distilled);
+			return distilled;
+		}
+		
+		const distilled: Article = {};
 		seen.set(this, distilled);
 		
-		for (const key in distilled) {
-			if (isAtom(distilled[key])) {
-				const state = getAtom(distilled[key])!;
+		for (const key of keys) {
+			if (isAtom(this.target[key])) {
+				// console.log('child atom:', key);
+				const state = getAtom(this.target[key])!;
 				(distilled[key] as any) = seen.get(state) ?? state.distill(seen);
+				continue;
 			}
+			
+			// console.log('child:', key);
+			distilled[key] = this.target[key];
 		}
 		
 		return distilled;
@@ -245,6 +265,8 @@ export function atom<T extends Article>(source: T): T {
 		source = { value: source } as any;
 	}
 	
+	if (Global.unatomSymbol in source) { return source; }
+	
 	// Handle memoization.
 	const computed = Global.memoized.get(source);
 	if (computed) { return computed.wrapper; }
@@ -252,7 +274,7 @@ export function atom<T extends Article>(source: T): T {
 	// Create proxy.
 	const wrapper: T = new Proxy(source, {
 		get(_target, key, _proxy) {
-			if (key === Global.symbol) { return state; }
+			if (key === Global.atomSymbol) { return state; }
 			state.subscribe(key);
 			return state.get(key);
 		},
@@ -274,8 +296,8 @@ export function atom<T extends Article>(source: T): T {
 	
 	// Resolve awaiting callbacks.
 	if (isAwaitingAtom(source)) {
-		const callbacks = source[Global.asyncSymbol];
-		delete (source as Article)[Global.asyncSymbol];
+		const callbacks = source[Global.awaitSymbol];
+		delete (source as Article)[Global.awaitSymbol];
 		
 		for (const callback of callbacks) {
 			callback.call(wrapper, wrapper);
@@ -283,6 +305,11 @@ export function atom<T extends Article>(source: T): T {
 	}
 	
 	return wrapper;
+}
+
+export function unatom<T extends Article>(value: T): T {
+	(value as any)[Global.unatomSymbol] = true;
+	return value;
 }
 
 /**
@@ -351,18 +378,18 @@ export function distillAtom<T>(value: T) {
  */
 export function whenAtom<T extends Article>(target: T, callback: AwaitingAtomCallback<T>) {
 	if (isAwaitingAtom(target)) {
-		target[Global.asyncSymbol]?.push(callback);
+		target[Global.awaitSymbol]?.push(callback);
 		return;
 	}
 	
-	(target as AwaitingAtomArticle<T>)[Global.asyncSymbol] = [ callback ];
+	(target as AwaitingAtomArticle<T>)[Global.awaitSymbol] = [ callback ];
 }
 
 /**
  * Returns the atom state instance for an object.
  */
 export function getAtom<T extends Article>(value: T): Atom<T> {
-	const state: Atom<T> | null = typeof value === 'object' && value !== null ? (value as any)[Global.symbol] : null;
+	const state: Atom<T> | null = typeof value === 'object' && value !== null ? (value as any)[Global.atomSymbol] : null;
 	if (!state) { throw new Error(`Cannot get atom state for the given value. ${typeof value === 'object' ? 'Expected atomized object but got object.' : `Expected object but got ${typeof value}`}`); }
 	return state;
 }
@@ -370,8 +397,8 @@ export function getAtom<T extends Article>(value: T): Atom<T> {
 /**
  * Check if value is an atomized object.
  */
-export function isAtom(value: any): value is { [Global.symbol]: Atom<any> } {
-	return typeof value === 'object' && value !== null && !!value[Global.symbol];
+export function isAtom(value: any): value is { [Global.atomSymbol]: Atom<any> } {
+	return typeof value === 'object' && value !== null && !!value[Global.atomSymbol];
 }
 
 /**
