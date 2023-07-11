@@ -272,10 +272,14 @@ export function atom<T extends Article>(source: T): T {
 		source[key] = atomize(source[key]);
 	}
 	
-	// Resolve awaiting callback.
+	// Resolve awaiting callbacks.
 	if (isAwaitingAtom(source)) {
-		for (const callback of source[Global.asyncSymbol]) { callback.call(wrapper, wrapper); }
+		const callbacks = source[Global.asyncSymbol];
 		delete (source as Article)[Global.asyncSymbol];
+		
+		for (const callback of callbacks) {
+			callback.call(wrapper, wrapper);
+		}
 	}
 	
 	return wrapper;
