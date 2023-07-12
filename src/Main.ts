@@ -427,11 +427,20 @@ export function observe(observer?: () => void): void | (() => void) {
 			console.warn("Observer uses no atoms. Check that the observer reads an atom's property and the observer is not called from a class constructor.");
 		}
 		
+		let timeout: null | number = null;
+		const update = () => {
+			if (timeout !== null) { return; }
+			timeout = setTimeout(() => {
+				observer();
+				timeout = null;
+			});
+		};
+		
 		// Apply observers.
 		const observers: (() => void)[] = [];
 		for (const [ state, keys ] of scan.states) {
 			// Add unwatch action to array.
-			observers.push(state.watch(keys, observer));
+			observers.push(state.watch(keys, update));
 		}
 		
 		return () => {
