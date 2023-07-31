@@ -23,15 +23,15 @@ import { atom, observe } from '@solarfluxx/atlas';
 const count = atom(0); // Creates an atom with the initial value `0`.
 
 function App() {
-	observe(); // Subscribes this component to watch for updates.
-	
-	return (
-		<div>
-			<div>Count: { count.value }</div>
-			
-			<button onClick={() => count.value++}>Increment</button>
-		</div>
-	);
+    observe(); // Subscribes this component to watch for updates.
+    
+    return (
+        <div>
+            <div>Count: { count.value }</div>
+            
+            <button onClick={() => count.value++}>Increment</button>
+        </div>
+    );
 }
 ```
 
@@ -47,29 +47,29 @@ Let's look at a more complex example:
 import { atom, observe } from '@solarfluxx/atlas';
 
 const users = atom([
-	{ name: 'John', email: 'john@example.com' },
-	{ name: 'Ryan', email: 'ryan@example.com' },
+    { name: 'John', email: 'john@example.com' },
+    { name: 'Ryan', email: 'ryan@example.com' },
 ]);
 
 function App() {
-	observe();
-	
-	return (
-		<div>
-			{ users.map(user => <User user={user} />) }
-		</div>
-	);
+    observe();
+    
+    return (
+        <div>
+            { users.map(user => <User user={user} />) }
+        </div>
+    );
 }
 
 function User({ user }) {
-	observe();
-	
-	return (
-		<div>
-			<input value={user.name} onChange={(event) => (user.name = event.currentTarget.value)} />
-			<input value={user.email} onChange={(event) => (user.email = event.currentTarget.value)} />
-		</div>
-	);
+    observe();
+    
+    return (
+        <div>
+            <input value={user.name} onChange={(event) => (user.name = event.currentTarget.value)} />
+            <input value={user.email} onChange={(event) => (user.email = event.currentTarget.value)} />
+        </div>
+    );
 }
 ```
 In this example, `App` will rerender when the `users` array changes but **not** when a user's name or email changes. This is because the `App` component does not read `name` or `email`. However, the `User` component does and will rerender in those cases. Why? Because even though `{ name: 'John', email: 'john@example.com' }` is not directly wrapped with `atom()`, objects are atomized recursively, so all of the array elements are atomized as well.
@@ -130,8 +130,8 @@ When called without a parameter, it will subscribe a React component using React
 
 ```tsx
 function App() {
-	observe();
-	// ...
+    observe();
+    // ...
 }
 ```
 
@@ -142,7 +142,7 @@ const count = atom(0);
 
 // Print the value of `count` when it changes:
 observe(() => {
-	console.log(count.value);
+    console.log(count.value);
 });
 ```
 
@@ -152,7 +152,7 @@ const count = atom(0);
 
 // Print the value of `count` when it changes:
 const unsubscribe = observe(() => {
-	console.log(count.value);
+    console.log(count.value);
 });
 
 // ...
@@ -166,10 +166,10 @@ unsubscribe();
 
 ```tsx
 function MyComponent() {
-	unobserve(); // Stops this component from subscribing to atoms.
-	
-	// Safe to access atom's without triggering rerenders.
-	// ...
+    unobserve(); // Stops this component from subscribing to atoms.
+    
+    // Safe to access atom's without triggering rerenders.
+    // ...
 }
 ```
 
@@ -177,7 +177,7 @@ Like `observe`, `unobserve` can accept a callback function. Unlike `observe` how
 
 ```ts
 unobserve(() => {
-	// Safe to access atom's without triggering observer updates.
+    // Safe to access atom's without triggering observer updates.
 });
 ```
 
@@ -197,15 +197,15 @@ The `observe` and `unobserve` functions work together to create and exit reactiv
 
 ```ts
 observe(() => {
-	// Accessing atoms here will subscribe to them.
-	
-	unobserve(() => {
-		// Accessing atoms here does nothing special.
-		
-		observe(() => {
-			// Once again, accessing atoms here will subscribe to them.
-		});
-	});
+    // Accessing atoms here will subscribe to them.
+    
+    unobserve(() => {
+        // Accessing atoms here does nothing special.
+        
+        observe(() => {
+            // Once again, accessing atoms here will subscribe to them.
+        });
+    });
 });
 ```
 
@@ -218,18 +218,18 @@ const count = atom(0);
 const count2 = atom(0);
 
 observe(() => {
-	// This code will run when `count` changes.
-	
-	console.log('count', count.value);
-	
-	unobserve(() => {
-		// Therefore, code here will run too since `unobserve` immediately invokes its callback.
-		
-		// The result of this means that the following code will
-		// run when `count` changes but will NOT when `count2` changes.
-		
-		console.log('count2', count2.value);
-	});
+    // This code will run when `count` changes.
+    
+    console.log('count', count.value);
+    
+    unobserve(() => {
+        // Therefore, code here will run too since `unobserve` immediately invokes its callback.
+        
+        // The result of this means that the following code will
+        // run when `count` changes but will NOT when `count2` changes.
+        
+        console.log('count2', count2.value);
+    });
 });
 ```
 
@@ -241,16 +241,16 @@ const count2 = atom(0);
 
 // This component will rerender when `count` changes but not when `count2` does.
 function App() {
-	observe();
-	
-	const count2Snapshot = unobserve(() => count2.value);
-	
-	return (
-		<div>
-			{ count.value }
-			{ count2Snapshot }
-		</div>
-	);
+    observe();
+    
+    const count2Snapshot = unobserve(() => count2.value);
+    
+    return (
+        <div>
+            { count.value }
+            { count2Snapshot }
+        </div>
+    );
 }
 ```
 
@@ -274,12 +274,12 @@ The `distillAtom` function will recursively extract a pure, unatomized, value fr
 
 ```ts
 const user = atom({
-	id: 14,
-	name: 'Ted',
-	friends: [
-		{ id: 19, name: 'Jeremy' },
-		{ id: 8, name: 'Sam' }
-	]
+    id: 14,
+    name: 'Ted',
+    friends: [
+        { id: 19, name: 'Jeremy' },
+        { id: 8, name: 'Sam' }
+    ]
 });
 
 console.log(user); // Proxy(Object) { id: 14, name: 'Ted', friends: Proxy(Array) { 0: Proxy(Object) { id: 19, name: 'Jeremy' }, ... } }
@@ -310,15 +310,15 @@ The `whenAtom` function invokes a callback when the target object is atomized fo
 
 ```ts
 class User {
-	public fullName!: string;
-	
-	constructor(public firstName: string, public lastName: string) {
-		whenAtom(this, function() {
-			observe(() => {
-				this.fullName = `${this.firstName} ${this.lastName}`;
-			});
-		});
-	}
+    public fullName!: string;
+    
+    constructor(public firstName: string, public lastName: string) {
+        whenAtom(this, function() {
+            observe(() => {
+                this.fullName = `${this.firstName} ${this.lastName}`;
+            });
+        });
+    }
 }
 
 const user = atom(new User('John', 'Smith')); // Instantiate User and atomize it.
