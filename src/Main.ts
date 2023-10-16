@@ -24,7 +24,7 @@ function isAwaitingAtom(value: any): value is AwaitingAtomArticle {
 }
 
 function atomize<T>(value: T): T {
-	if (isAtom(value)) {
+	if (value instanceof Node || value instanceof Window) {
 		return value;
 	}
 	
