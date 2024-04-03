@@ -306,7 +306,7 @@ console.log(count); // { value: 13 }
 
 ## Understanding `whenAtom`
 
-The `whenAtom` function invokes a callback when the target object is atomized for the first time. This gives you the means to write code that wait until and execute after an object is atomized. This was primarily made for class constructors which execute before atomization. This prevented the constructor from setting up observers.
+The `whenAtom` function invokes a callback when the target object is atomized for the first time. This gives you a means to execute code after an object is initialized as an atom. This was primarily made for class constructors which execute before atomization preventing observers and other atom dependent code from working.
 
 ```ts
 class User {
