@@ -23,8 +23,19 @@ function isAwaitingAtom(value: any): value is AwaitingAtomArticle {
 	return typeof value === 'object' && value !== null && value[Global.awaitSymbol];
 }
 
+function getAllPropertyDescriptors(value: object): PropertyDescriptorMap {
+	const descriptors = Object.getOwnPropertyDescriptors(value);
+	
+	let axis: object | null = value;
+	while (axis = Object.getPrototypeOf(axis)) {
+		Object.assign(descriptors, Object.getOwnPropertyDescriptors(axis));
+	}
+	
+	return descriptors;
+}
+
 function atomize<T>(value: T): T {
-	if (value instanceof Node || value instanceof Window) {
+	if (value instanceof Node || value instanceof Event || value instanceof Window) {
 		return value;
 	}
 	
@@ -260,6 +271,8 @@ export function atom<T extends Function>(source: T): Reference<T>;
 export function atom<T extends Article>(source: T): T;
 export function atom<T>(source: T): Reference<T>;
 export function atom<T extends Article>(source: T): T {
+	"use strict";
+	
 	if (!isArticle(source)) {
 		// Coerce source to object.
 		source = { value: source } as any;
@@ -290,7 +303,15 @@ export function atom<T extends Article>(source: T): T {
 	Global.memoized.set(source, state);
 	
 	// Recursively atomize properties.
+	const descriptors = getAllPropertyDescriptors(source);
 	for (const key in source) {
+		if (key in descriptors) {
+			const descriptor = descriptors[key];
+			if ('get' in descriptor ? typeof descriptor.set === 'undefined' : !descriptor.writable) {
+				continue;
+			}
+		}
+		
 		source[key] = atomize(source[key]);
 	}
 	
