@@ -65,7 +65,7 @@ module Global {
 	export const contexts: Context[] = [];
 	export const callContexts: CallContext[] = [];
 	
-	export const memoized = new Map<Article, Atom<any>>();
+	export const memoized = new WeakMap<Article, Atom<any>>();
 	
 	export const manuals = new Map<object, Manual>([
 		[WeakSet, {
